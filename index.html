@@ -9,6 +9,7 @@
   <title>臺北 YouBike 2.0｜即時站點地圖</title>
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoZQ3L9S3Qa4qY=" crossorigin="">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css">
   <style>
     :root{--ink:#142d37;--muted:#607780;--teal:#007d70;--mint:#e9f7f0;--line:#dce7e7;--bg:#f4f8f7;--white:#fff;--shadow:0 12px 40px rgba(16,49,55,.10)}
     *{box-sizing:border-box} html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;color:var(--ink)} button,input,select{font:inherit} button{cursor:pointer} button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #13a696;outline-offset:2px} .app{display:flex;flex-direction:column;height:100dvh;min-height:560px;overflow:hidden;background:var(--bg)}
@@ -34,13 +35,15 @@
   </aside>
   <section class="map-section" aria-label="臺北 YouBike 地圖"><div class="map" id="map"></div>
    <div class="map-overlay"><div class="legend" aria-label="地圖標記顏色圖例"><span><i style="background:#0b9773"></i>5 輛以上</span><span><i style="background:#edac35"></i>1–4 輛</span><span><i style="background:#df6262"></i>0 輛／停用</span></div><div class="map-tip">點選地圖上的圓點查看站點資訊</div></div>
-   <div class="source">資料來源：<a href="https://data.gov.taipei/dataset/detail?id=c6bc8aed-557d-41d5-bfb1-8da24f78f2fb" target="_blank" rel="noopener noreferrer">臺北市政府交通局開放資料</a> · 地圖 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></div>
+   <div class="source">資料來源：<a href="https://data.gov.taipei/dataset/detail?id=c6bc8aed-557d-41d5-bfb1-8da24f78f2fb" target="_blank" rel="noopener noreferrer">臺北市政府交通局開放資料</a> · 地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · 圖資 <a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer">OpenFreeMap</a></div>
    <div class="tile-warning" id="tile-warning" role="alert"></div>
    <div class="failure" id="failure" role="alert"><strong>目前無法取得即時資料</strong><div id="failure-message">請檢查網路連線後再試一次。</div><button id="retry" type="button">重新連線</button></div>
   </section>
  </main>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 <script>
 'use strict';
 (() => {
@@ -55,22 +58,33 @@
  if (!supported) { $('status').textContent = '地圖套件載入失敗'; $('failure-message').textContent = 'Leaflet 地圖套件無法載入，請確認網路連線並重新開啟網頁。'; $('failure').classList.add('show'); return; }
  map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([25.033,121.5654],13);
  L.control.zoom({position:'bottomright'}).addTo(map);
- const tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-   maxZoom:19, subdomains:[], referrerPolicy:'strict-origin-when-cross-origin',
-   attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>'
- }).addTo(map);
- let tileErrors = 0;
- tileLayer.on('tileerror', () => {
-   tileErrors++;
-   if (tileErrors >= 2) {
-     const tip = $('tile-warning');
-     tip.innerHTML = location.protocol === 'file:'
-       ? '地圖圖磚遭到拒絕。請將此 index.html 部署到 <strong>GitHub Pages</strong> 後，以 https 網址開啟；本機 file:// 可能無法送出必要的 Referer。'
-       : '部分地圖圖磚載入失敗。請確認網路與瀏覽器隱私設定，稍後重新整理；若持續出現 403，請檢查圖磚服務使用政策。';
-     tip.classList.add('show');
+ // OpenFreeMap 提供 OpenStreetMap 衍生向量圖資，不使用受限的 OSM 官方圖磚伺服器。
+ // Leaflet 繼續處理站點標記、Popup 與地圖移動。
+ const tileTip = $('tile-warning');
+ const showMapError = () => {
+   tileTip.textContent = '底圖載入失敗：請檢查網路連線、瀏覽器 WebGL 支援，或關閉可能阻擋地圖服務的擴充功能。';
+   tileTip.classList.add('show');
+ };
+ if (typeof L.maplibreGL !== 'function' || typeof window.maplibregl === 'undefined') {
+   showMapError();
+ } else {
+   try {
+     const baseLayer = L.maplibreGL({
+       style: 'https://tiles.openfreemap.org/styles/liberty',
+       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> | <a href="https://openfreemap.org/">OpenFreeMap</a>',
+       interactive: false
+     }).addTo(map);
+     const glMap = baseLayer.getMaplibreMap();
+     glMap.on('error', (e) => {
+       console.error('底圖載入錯誤', e && e.error ? e.error : e);
+       showMapError();
+     });
+     glMap.on('load', () => tileTip.classList.remove('show'));
+   } catch (err) {
+     console.error('建立底圖失敗', err);
+     showMapError();
    }
- });
- tileLayer.on('load', () => { if (tileErrors === 0) $('tile-warning').classList.remove('show'); });
+ }
  layer = L.layerGroup().addTo(map);
  const stationName = s => (s.name || '').replace(/^YouBike\s*2\.0[_\s]*/i,'').replace(/^YouBike2\.0[_\s]*/i,'');
  const stateOf = s => s.active === false || s.rent <= 0 ? 'empty' : s.rent < 5 ? 'low' : 'good';
