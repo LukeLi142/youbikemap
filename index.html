@@ -9,7 +9,6 @@
   <title>臺北 YouBike 2.0｜即時站點地圖</title>
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoZQ3L9S3Qa4qY=" crossorigin="">
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css">
   <style>
     :root{--ink:#142d37;--muted:#607780;--teal:#007d70;--mint:#e9f7f0;--line:#dce7e7;--bg:#f4f8f7;--white:#fff;--shadow:0 12px 40px rgba(16,49,55,.10)}
     *{box-sizing:border-box} html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;color:var(--ink)} button,input,select{font:inherit} button{cursor:pointer} button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #13a696;outline-offset:2px} .app{display:flex;flex-direction:column;height:100dvh;min-height:560px;overflow:hidden;background:var(--bg)}
@@ -35,15 +34,13 @@
   </aside>
   <section class="map-section" aria-label="臺北 YouBike 地圖"><div class="map" id="map"></div>
    <div class="map-overlay"><div class="legend" aria-label="地圖標記顏色圖例"><span><i style="background:#0b9773"></i>5 輛以上</span><span><i style="background:#edac35"></i>1–4 輛</span><span><i style="background:#df6262"></i>0 輛／停用</span></div><div class="map-tip">點選地圖上的圓點查看站點資訊</div></div>
-   <div class="source">資料來源：<a href="https://data.gov.taipei/dataset/detail?id=c6bc8aed-557d-41d5-bfb1-8da24f78f2fb" target="_blank" rel="noopener noreferrer">臺北市政府交通局開放資料</a> · 地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · 圖資 <a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer">OpenFreeMap</a></div>
+   <div class="source">資料來源：<a href="https://data.gov.taipei/dataset/detail?id=c6bc8aed-557d-41d5-bfb1-8da24f78f2fb" target="_blank" rel="noopener noreferrer">臺北市政府交通局開放資料</a> · 地圖資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · 圖磚 <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a></div>
    <div class="tile-warning" id="tile-warning" role="alert"></div>
    <div class="failure" id="failure" role="alert"><strong>目前無法取得即時資料</strong><div id="failure-message">請檢查網路連線後再試一次。</div><button id="retry" type="button">重新連線</button></div>
   </section>
  </main>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
-<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 <script>
 'use strict';
 (() => {
@@ -58,33 +55,25 @@
  if (!supported) { $('status').textContent = '地圖套件載入失敗'; $('failure-message').textContent = 'Leaflet 地圖套件無法載入，請確認網路連線並重新開啟網頁。'; $('failure').classList.add('show'); return; }
  map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([25.033,121.5654],13);
  L.control.zoom({position:'bottomright'}).addTo(map);
- // OpenFreeMap 提供 OpenStreetMap 衍生向量圖資，不使用受限的 OSM 官方圖磚伺服器。
- // Leaflet 繼續處理站點標記、Popup 與地圖移動。
+ // CARTO Voyager 是由 OpenStreetMap 資料製成的標準 raster 圖磚。
+ // 使用 Leaflet 自己的 tileLayer，避免 MapLibre/Leaflet 雙引擎的座標同步問題。
  const tileTip = $('tile-warning');
- const showMapError = () => {
-   tileTip.textContent = '底圖載入失敗：請檢查網路連線、瀏覽器 WebGL 支援，或關閉可能阻擋地圖服務的擴充功能。';
-   tileTip.classList.add('show');
- };
- if (typeof L.maplibreGL !== 'function' || typeof window.maplibregl === 'undefined') {
-   showMapError();
- } else {
-   try {
-     const baseLayer = L.maplibreGL({
-       style: 'https://tiles.openfreemap.org/styles/liberty',
-       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> | <a href="https://openfreemap.org/">OpenFreeMap</a>',
-       interactive: false
-     }).addTo(map);
-     const glMap = baseLayer.getMaplibreMap();
-     glMap.on('error', (e) => {
-       console.error('底圖載入錯誤', e && e.error ? e.error : e);
-       showMapError();
-     });
-     glMap.on('load', () => tileTip.classList.remove('show'));
-   } catch (err) {
-     console.error('建立底圖失敗', err);
-     showMapError();
+ let tileErrors = 0;
+ const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+   subdomains: 'abcd', maxZoom: 19, minZoom: 3, tileSize: 256,
+   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+   crossOrigin: false,
+   updateWhenIdle: true,
+   keepBuffer: 3
+ }).addTo(map);
+ baseLayer.on('tileerror', () => {
+   tileErrors++;
+   if (tileErrors >= 3) {
+     tileTip.textContent = '部分底圖載入失敗，請檢查網路連線或稍後重新整理。';
+     tileTip.classList.add('show');
    }
- }
+ });
+ baseLayer.on('load', () => { tileErrors = 0; tileTip.classList.remove('show'); });
  layer = L.layerGroup().addTo(map);
  const stationName = s => (s.name || '').replace(/^YouBike\s*2\.0[_\s]*/i,'').replace(/^YouBike2\.0[_\s]*/i,'');
  const stateOf = s => s.active === false || s.rent <= 0 ? 'empty' : s.rent < 5 ? 'low' : 'good';
@@ -101,9 +90,23 @@
  function popupHTML(s){return `<div class="popup-title">${escapeHTML(stationName(s))}</div><div class="popup-region">${escapeHTML(s.district)} · ${s.active?'正常營運':'暫停營運'}</div><div class="popup-numbers"><div class="popup-number"><strong>${s.rent}</strong><span>可借車輛</span></div><div class="popup-number return"><strong>${s.docks}</strong><span>可還車位</span></div></div><div class="popup-address">地址：${escapeHTML(s.address || '未提供')}</div><div class="popup-update">站點資料時間：${escapeHTML(s.updated || '未提供')}</div>`;}
  function matches(s){const q=$('search').value.trim().toLocaleLowerCase('zh-Hant');const district=$('district').value;const availability=$('availability').value;return (!q || `${s.name} ${stationName(s)} ${s.address} ${s.district}`.toLocaleLowerCase('zh-Hant').includes(q)) && (!district || s.district===district) && (availability==='all' || (availability==='available'?s.active&&s.rent>0:!s.active||s.rent===0));}
  function updateDistricts(){const sel=$('district'),prev=sel.value;const values=[...new Set(stations.map(s=>s.district).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));sel.replaceChildren(new Option('所有行政區',''),...values.map(v=>new Option(v,v)));sel.value=values.includes(prev)?prev:'';}
- function selectStation(id){if(selectedId && markers.has(selectedId)){const old=markers.get(selectedId), s=stations.find(x=>x.id===selectedId);if(s)old.setIcon(iconFor(s));}selectedId=id;const marker=markers.get(id),s=stations.find(x=>x.id===id);if(!marker||!s)return;marker.setIcon(iconFor(s,true));map.flyTo([s.lat,s.lng],Math.max(16,map.getZoom()),{duration:.55});marker.openPopup();}
+ function selectStation(id){
+   const marker = markers.get(id), s = stations.find(x => x.id === id);
+   if (!marker || !s) return;
+   if (selectedId && selectedId !== id && markers.has(selectedId)) {
+     const oldStation = stations.find(x => x.id === selectedId);
+     if (oldStation) markers.get(selectedId).setIcon(iconFor(oldStation));
+   }
+   selectedId = id;
+   marker.setIcon(iconFor(s, true));
+   // 停止前一次動畫，確保快速連續點擊不同站點不會導致定位錯亂。
+   map.stop();
+   // 先移動地圖，完成後再開啟 Popup，避免 Leaflet 自動平移使中心偏移。
+   map.once('moveend', () => { if (selectedId === id) marker.openPopup(); });
+   map.flyTo(marker.getLatLng(), Math.max(16, map.getZoom()), {duration: 0.65});
+ }
  function render(){const filtered=stations.filter(matches);const visible=new Set(filtered.map(s=>s.id));for(const [id,marker] of markers){if(!visible.has(id)){layer.removeLayer(marker);markers.delete(id);}}
-  for(const s of filtered){let marker=markers.get(s.id);if(!marker){marker=L.marker([s.lat,s.lng],{icon:iconFor(s,s.id===selectedId),title:stationName(s)}).addTo(layer);marker.on('click',()=>{selectedId=s.id;});markers.set(s.id,marker);}else{marker.setLatLng([s.lat,s.lng]);marker.setIcon(iconFor(s,s.id===selectedId));}marker.bindPopup(popupHTML(s),{maxWidth:280});}
+  for(const s of filtered){let marker=markers.get(s.id);if(!marker){marker=L.marker([s.lat,s.lng],{icon:iconFor(s,s.id===selectedId),title:stationName(s)}).addTo(layer);marker.on('click',()=>{selectStation(s.id);});markers.set(s.id,marker);}else{marker.setLatLng([s.lat,s.lng]);marker.setIcon(iconFor(s,s.id===selectedId));}marker.bindPopup(popupHTML(s),{maxWidth:280,autoPan:false});}
   $('total').textContent=filtered.length.toLocaleString('zh-TW');$('bikes').textContent=filtered.reduce((a,s)=>a+(s.active?s.rent:0),0).toLocaleString('zh-TW');$('docks').textContent=filtered.reduce((a,s)=>a+(s.active?s.docks:0),0).toLocaleString('zh-TW');$('result-count').textContent=`顯示前 ${Math.min(60,filtered.length)} / ${filtered.length} 站`;
   const results=$('results');results.replaceChildren();if(!filtered.length){results.innerHTML='<div class="no-results">找不到符合條件的站點。<br>請調整搜尋關鍵字或篩選條件。</div>';return;}
   const fragment=document.createDocumentFragment();for(const s of filtered.slice(0,60)){const button=document.createElement('button');button.type='button';button.className='station';button.setAttribute('aria-label',`${stationName(s)}，可借 ${s.rent} 輛，可還 ${s.docks} 格`);button.innerHTML=`<span class="pin" style="background:${colors[stateOf(s)]}"></span><span class="station-info"><strong>${escapeHTML(stationName(s))}</strong><span class="address">${escapeHTML(s.district)} · ${escapeHTML(s.address)}</span><span class="numbers"><span>可借 <b>${s.active?s.rent:0}</b></span><span>可還 <b>${s.active?s.docks:0}</b></span>${s.active?'':'<span>暫停營運</span>'}</span></span>`;button.addEventListener('click',()=>selectStation(s.id));fragment.appendChild(button);}results.appendChild(fragment);
